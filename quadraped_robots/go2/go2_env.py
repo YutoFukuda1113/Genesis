@@ -11,7 +11,7 @@ def gs_rand_float(lower, upper, shape, device):
 
 
 class Go2Env:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, device="cuda"):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, edit_terrain=False,device="cuda"):
         self.device = torch.device(device)
 
         self.num_envs = num_envs
@@ -32,49 +32,31 @@ class Go2Env:
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = reward_cfg["reward_scales"]
 
-        # create scene
-        self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
-            viewer_options=gs.options.ViewerOptions(
-                max_FPS=int(0.5 / self.dt),
-                camera_pos=(2.0, 0.0, 2.5),
-                camera_lookat=(0.0, 0.0, 0.5),
-                camera_fov=40,
-            ),
-            vis_options=gs.options.VisOptions(n_rendered_envs=1),
-            rigid_options=gs.options.RigidOptions(
-                dt=self.dt,
-                constraint_solver=gs.constraint_solver.Newton,
-                enable_collision=True,
-                enable_joint_limit=True,
-            ),
-            show_viewer=show_viewer,
-        )
+        if not edit_terrain:
+            # create scene
+            self.scene = gs.Scene(
+                sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
+                viewer_options=gs.options.ViewerOptions(
+                    max_FPS=int(0.5 / self.dt),
+                    camera_pos=(2.0, 0.0, 2.5),
+                    camera_lookat=(0.0, 0.0, 0.5),
+                    camera_fov=40,
+                ),
+                vis_options=gs.options.VisOptions(n_rendered_envs=1),
+                rigid_options=gs.options.RigidOptions(
+                    dt=self.dt,
+                    constraint_solver=gs.constraint_solver.Newton,
+                    enable_collision=True,
+                    enable_joint_limit=True,
+                ),
+                show_viewer=show_viewer,
+            )
 
-        # add plain
-        # self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
-        n_subterrains=(2, 2)
-        subterrain_types=[
-            ["pyramid_sloped_terrain", "wave_terrain"],
-            ["stairs_terrain","pyramid_stairs_terrain"]
-            ]
-        # n_subterrains=(1, 1)
-        # subterrain_types=[
-        #     ["stairs_terrain"]
-        #     ]
-        self.terrain = gs.morphs.Terrain(
-            n_subterrains=n_subterrains,
-            subterrain_types=subterrain_types,
-        )
-        _, _, self.terrain.height_field = parse_terrain(morph=self.terrain, surface=gs.surfaces.Default())
-        # print(dir(self.terrain))
-        self.scene.add_entity(self.terrain)
-        print("height field is\n", self.terrain.height_field)
-        # self.scene.add_entity(gs.morphs.MJCF(file="/home/techshare/Genesis/genesis/assets/xml/scene/scene.xml"))
-
+            # add plain
+            self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        
         # add robot
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
-        self.envs_origins = torch.zeros((self.num_envs, 7), device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.robot = self.scene.add_entity(
@@ -226,24 +208,8 @@ class Go2Env:
         # reset base
         self.base_pos[envs_idx] = self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
-        for index in envs_idx:
-            x, y, z, q = self._ramdom_robot_position()
-            self.envs_origins[index, 0] = x
-            self.envs_origins[index, 1] = y
-            self.envs_origins[index, 2] = z
-            # self.envs_origins[index, 3:7] = q
-            # self.base_pos[index, 0] = x # maybe not use
-            # self.base_pos[index, 1] = y
-            # self.base_pos[index, 2] = z
-            self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
-        # debug
-        # print(f"envs_idx device: {envs_idx.device}")
-        # print(f"self.base_pos device: {self.base_pos.device}")
-        # print(f"self.envs_origins device: {self.envs_origins.device}")
-        # self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
+        self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        # self.robot.set_quat(self.envs_origins[envs_idx, 3:7], zero_velocity=False, envs_idx=envs_idx)
         self.base_lin_vel[envs_idx] = 0
         self.base_ang_vel[envs_idx] = 0
         self.robot.zero_all_dofs_velocity(envs_idx)
@@ -268,29 +234,6 @@ class Go2Env:
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         return self.obs_buf, None
-
-    def _ramdom_robot_position(self):
-        # 1. Sample random row, col(a subterrain)
-        # 0.775 ~ l2_norm(0.7, 0.31)
-        go2_size_xy = 0.775
-        row = np.random.randint(int((self.terrain.n_subterrains[0]*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
-        col = np.random.randint(int((self.terrain.n_subterrains[1]*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
-        # 2. Convert (row, col) -> (x, y) in world coords
-        # Each cell is horizontal_scale in size
-        x = row*self.terrain.horizontal_scale + go2_size_xy/2
-        y = col*self.terrain.horizontal_scale + go2_size_xy/2
-        # 3. Get terrain height in meters
-        z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
-        # z = 0.5
-
-        # 4. Add a small offset so the robot spawns above the ground
-        # z += 0.1  # for example
-
-        # 5. rotation quaternion
-        angle = np.random.uniform(2*np.pi)
-        q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
-        
-        return x, y, z, q
 
     # ------------ reward functions----------------
     def _reward_tracking_lin_vel(self):
