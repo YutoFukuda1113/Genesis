@@ -10,15 +10,14 @@ import genesis as gs
 
 
 def get_train_cfg(exp_name, max_iterations):
-
     train_cfg_dict = {
         "algorithm": {
             "clip_param": 0.2,
             "desired_kl": 0.01,
-            "entropy_coef": 0.01,
+            "entropy_coef": 0.004,
             "gamma": 0.99,
             "lam": 0.95,
-            "learning_rate": 0.001,
+            "learning_rate": 0.0003,
             "max_grad_norm": 1.0,
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
@@ -40,7 +39,7 @@ def get_train_cfg(exp_name, max_iterations):
             "load_run": -1,
             "log_interval": 1,
             "max_iterations": max_iterations,
-            "num_steps_per_env": 24,
+            "num_steps_per_env": 100,
             "policy_class_name": "ActorCritic",
             "record_interval": -1,
             "resume": False,
@@ -69,28 +68,33 @@ def get_cfgs():
         # base pose
         "base_init_pos": [0.0, 0.0, 1.0],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 5.0,
-        "resampling_time_s": 5.0,
-        # "action_scale": 0.25,
-        # "simulate_action_latency": True,
+        "episode_length_s": 15.0,
+        "at_target_threshold": 0.1,
+        "resampling_time_s": 3.0,
+        "simulate_action_latency": True,
         "clip_actions": 1.0,
+        # visualization
+        "visualize_target": False,
+        "visualize_camera": False,
+        "max_visualize_FPS": 60,
     }
     obs_cfg = {
         "num_obs": 17,
         "obs_scales": {
             "rel_pos": 1 / 3.0,
-            "euler_xy": 1 / 180,
-            "euler_z": 1 / 360,
             "lin_vel": 1 / 3.0,
             "ang_vel": 1 / 3.14159,
         },
     }
     reward_cfg = {
+        "yaw_lambda": -10.0,
         "reward_scales": {
-            "target": 5.0,
-            "smooth": -0.001,
-            "crash": 1.0,
-        }
+            "target": 10.0,
+            "smooth": -1e-4,
+            "yaw": 0.01,
+            "angular": -2e-4,
+            "crash": -10.0,
+        },
     }
     command_cfg = {
         "num_commands": 3,
@@ -105,11 +109,12 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
-    parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=1000)
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-B", "--num_envs", type=int, default=8192)
+    parser.add_argument("--max_iterations", type=int, default=300)
     args = parser.parse_args()
 
-    gs.init(logging_level="warning")
+    gs.init(logging_level="error")
 
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
@@ -119,8 +124,16 @@ def main():
         shutil.rmtree(log_dir)
     os.makedirs(log_dir, exist_ok=True)
 
+    if args.vis:
+        env_cfg["visualize_target"] = True
+
     env = HoverEnv(
-        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
+        num_envs=args.num_envs,
+        env_cfg=env_cfg,
+        obs_cfg=obs_cfg,
+        reward_cfg=reward_cfg,
+        command_cfg=command_cfg,
+        show_viewer=args.vis,
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")

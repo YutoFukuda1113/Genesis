@@ -49,7 +49,7 @@ def _order_links(l_infos, j_infos, links_g_info=None):
     if links_g_info is not None:
         links_g_info = [links_g_info[i] for i in ordered_links_idx]
 
-    return new_l_infos, new_j_infos, links_g_info
+    return new_l_infos, new_j_infos, links_g_info, ordered_links_idx
 
 
 def parse_urdf(morph, surface):
@@ -281,19 +281,13 @@ def parse_urdf(morph, surface):
             if joint.safety_controller.k_velocity is not None:
                 j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
 
-        if joint.safety_controller is not None:
-            if joint.safety_controller.k_position is not None:
-                j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
-            if joint.safety_controller.k_velocity is not None:
-                j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
-
         if joint.limit is not None:
             if joint.limit.effort is not None:
                 j_info["dofs_force_range"] = (
                     j_info["dofs_force_range"] / np.abs(j_info["dofs_force_range"]) * joint.limit.effort
                 )
 
-    l_infos, j_infos, _ = _order_links(l_infos, j_infos)
+    l_infos, j_infos, _, _ = _order_links(l_infos, j_infos)
     ######################### first joint and base link #########################
     j_info = j_infos[0]
     l_info = l_infos[0]
